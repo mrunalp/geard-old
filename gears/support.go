@@ -102,12 +102,17 @@ func InitPostStart(dockerSocket string, gearId Identifier) error {
 		return err
 	}
 
+	pid, err := docker.ChildProcessForContainer(container)
+	if err != nil {
+		return err
+	}
+
+	if err = enableRoutingInNamespace(pid); err != nil {
+		return err
+	}
+
 	if file, err := os.Open(gearId.NetworkLinksPathFor()); err == nil {
 		defer file.Close()
-		pid, err := docker.ChildProcessForContainer(container)
-		if err != nil {
-			return err
-		}
 		log.Printf("PID %d", pid)
 		if err := updateNamespaceNetworkLinks(pid, "127.0.0.2", file); err != nil {
 			return err
@@ -297,5 +302,23 @@ func updateNamespaceNetworkLinks(pid int, localAddr string, ports io.Reader) err
 		log.Printf("network_links: iptables-restore did not successfully complete: %v", err)
 		return err
 	}
+	return nil
+}
+
+func enableRoutingInNamespace(pid int) error {
+	out, err := exec.Command("nsenter", "-n", "-t", strconv.Itoa(pid), "--", "/sbin/sysctl", "-w", "net.ipv4.conf.all.route_localnet=1").Output()
+	if err != nil {
+		log.Printf("routing: Unable to enable localnet routing: %v", err)
+		log.Printf("output: %v", out)
+		return err
+	}
+
+	out, err = exec.Command("nsenter", "-n", "-t", strconv.Itoa(pid), "--", "/sbin/sysctl", "-w", "net.ipv4.ip_forward=1").Output()
+	if err != nil {
+		log.Printf("routing: Unable to enable ip forwarding: %v", err)
+		log.Printf("output: %v", out)
+		return err
+	}
+
 	return nil
 }
